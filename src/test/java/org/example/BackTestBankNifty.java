@@ -27,13 +27,17 @@ public class BackTestBankNifty {
         var prices = InvestingDotComHistoricPriceReader.parse(
                 Paths.get(BackTestBankNifty.class.getClassLoader().getResource("bank-nifty-futures-2017-2023.csv").toURI()));
 
+        InstrumentType instrumentType = InstrumentType.EQUITY;
         Position position = Position.LONG;
         double stopLose = 18034;
         double tradePrice = 18266;
         double top1 = 18226;
         double top2 = 18072;
         double low = Double.NaN;
+        boolean isAdjusted = false;
         LocalDate tradeDate = LocalDate.of(2016, Month.DECEMBER, 29);
+        System.out.println("Trade Date, Position, Entry, exit, P/N");
+
         for (int i = 2; i < prices.length; i++) {
             double dayBeforeYesterdayClose = prices[i - 2].close();
             double yesterdaysClose = prices[i - 1].close();
@@ -41,6 +45,10 @@ public class BackTestBankNifty {
 
             LocalDate today = prices[i].date();
 
+            if (!isAdjusted) {
+                stopLose = adjustStopLose(position, stopLose, tradePrice, todayClose);
+                isAdjusted = true;
+            }
             //up trend
             if (yesterdaysClose < dayBeforeYesterdayClose && yesterdaysClose < todayClose) {
                 low = yesterdaysClose;
@@ -63,7 +71,7 @@ public class BackTestBankNifty {
                     stopLose = top2;
                 }
             }
-
+            //
             //Check stop loose
             if (Position.LONG == position && stopLose >= todayClose) {
 //                System.out.println(MessageFormat.format("{0} Stop lose hit at {1}, closing long position", today, stopLose));
@@ -73,9 +81,10 @@ public class BackTestBankNifty {
                 tradeDate = today;
                 tradePrice = stopLose;
                 position = Position.SHORT;
-                stopLose = top2;
+                stopLose = getSpotLose(instrumentType, position, top2, tradePrice); //top2
                 top1 = top2;
                 top2 = Double.NaN;
+                isAdjusted = false;
 
             } else if (Position.SHORT == position && stopLose <= todayClose) {
 //                System.out.println(MessageFormat.format("{0} Stop lose hit at {1}, closing Short position", today, stopLose));
@@ -85,16 +94,73 @@ public class BackTestBankNifty {
                 tradeDate = today;
                 tradePrice = stopLose;
                 position = Position.LONG;
-                stopLose = low;
+                stopLose = getSpotLose(instrumentType, position, low, tradePrice); //low
                 top1 = top2;
                 top2 = Double.NaN;
-
+                isAdjusted = false;
             }
         }
     }
 
+    private static double adjustStopLose(Position position, double stopLose, double tradePrice, double eodPrice) {
+        if (stopLose != tradePrice) {
+            if (Position.SHORT == position && eodPrice <= tradePrice) {
+//                System.out.println(MessageFormat.format("Stop lose will be adjusted from {0} to new stop lose : {1}", stopLose, tradePrice));
+                return tradePrice;
+            }
+            if (Position.LONG == position && eodPrice >= tradePrice) {
+//                System.out.println(MessageFormat.format("Stop lose will be adjusted from {0} to new stop lose : {1}", stopLose, tradePrice));
+                return tradePrice;
+
+            }
+        }
+        return stopLose;
+    }
+
+    static double getSpotLose(InstrumentConfiguration configuration, Position position, double proposedStopLose, double tradePrice) {
+        double possibleStopLose = tradePrice * configuration.stopLosePercentage();
+        if (Position.SHORT == position) {
+//            return Math.min(proposedStopLose, tradePrice + possibleStopLose);
+            return proposedStopLose;
+        } else {
+//            return Math.max(proposedStopLose, tradePrice - possibleStopLose);
+            return proposedStopLose;
+        }
+    }
+
+    interface InstrumentConfiguration {
+        double stopLosePercentage();
+    }
+
+    enum InstrumentType implements InstrumentConfiguration {
+        EQUITY(0.03), INDEX(0.02);
+        private final double maxStopLose;
+
+        InstrumentType(double maxStopLose) {
+            this.maxStopLose = maxStopLose;
+        }
+
+        public double stopLosePercentage() {
+            return maxStopLose;
+        }
+
+
+    }
+
     enum Position {
-        LONG, SHORT
+        LONG {
+            @Override
+            public String toString() {
+                return "BUY";
+            }
+        }, SHORT {
+            @Override
+            public String toString() {
+                return "SELL";
+            }
+        }
+
+
     }
 
 
